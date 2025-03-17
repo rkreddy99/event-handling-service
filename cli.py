@@ -117,14 +117,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Subscribe, Unsubscribe, Edit, or Get Info on event subscriptions.")
     parser.add_argument("action", choices=["subscribe", "unsubscribe", "edit", "info"], help="Action to perform")
     parser.add_argument("user", help="Username")
-    parser.add_argument("event_type", nargs="?", help="Event type (Required for subscribe, unsubscribe, edit)")
-
-    # Additional argument for subscribe/edit (command)
+    parser.add_argument("--event_type", help="Event type (Required for subscribe, unsubscribe, edit)", required=False)
     parser.add_argument("--cmd", help="Command to execute for the event (Required for subscribe/edit)", required=False)
 
     args = parser.parse_args()
 
+    if not args.user:
+        print("Error: User is required.")
+        exit(1)
+
     if args.action in ["subscribe", "edit"]:
+        if not args.event_type:
+            print("Error: Event type is required for subscribing or editing.")
+            exit(1)
         if not args.cmd:
             print("Error: --cmd is required for subscribing or editing.")
             exit(1)
