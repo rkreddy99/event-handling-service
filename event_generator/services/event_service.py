@@ -1,8 +1,8 @@
 import boto3
 import json
 import requests
-from config import AWS_REGION, SQS_QUEUE_URL, EVENT_NETTING_SERVICE_URL, EVENT_NETTING_REQUIRED
-from models import BaseEvent
+from ..config import AWS_REGION, SQS_QUEUE_URL, EVENT_NETTING_SERVICE_URL, EVENT_NETTING_REQUIRED
+from ..models import BaseEvent
 import hashlib
 
 class EventService:
@@ -12,26 +12,33 @@ class EventService:
 
     def __init__(self):
         self.sqs_client = boto3.client(
-            SQS_QUEUE_URL, AWS_REGION
+            "sqs", AWS_REGION
         )
 
-    def send_to_sqs(self, event: BaseEvent):
+    def send_to_sqs(self, event_data: BaseEvent):
         """
         Sends an event to the SQS queue.
         """
-        event_json = event.model_dump()
         try:
+            # Create a JSON-serializable version of the event data
+            event_json = event_data.model_dump()
+            event_json["timestamp"] = event_json["timestamp"].isoformat()
+            
+            message_body = json.dumps(event_json)
+            
             response = self.sqs_client.send_message(
                 QueueUrl=SQS_QUEUE_URL,
-                MessageBody=event_json,
-                MessageGroupId=event.event_type,
+                MessageBody=message_body,
+                MessageGroupId=event_data.event_type,
                 MessageDeduplicationId=hashlib.md5(json.dumps(event_json, sort_keys=True).encode('utf-8')).hexdigest()
             )
             print(f"Sent event to SQS: {response['MessageId']}")
             return True
         except Exception as e:
             print(f"Error sending to SQS: {e}")
-            return False
+            import traceback
+            traceback.print_exc()
+            raise e
 
     def send_to_event_netting(self, event: BaseEvent):
         """
@@ -53,6 +60,7 @@ class EventService:
         """
         Processes an event: sends it to SQS and optionally to the event netting service.
         """
+        print(f"Processing event: {event.event_type}")
         sqs_success = self.send_to_sqs(event)
 
         if EVENT_NETTING_REQUIRED:

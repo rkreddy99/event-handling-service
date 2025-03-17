@@ -1,8 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi import Depends
-from models.base_event import BaseEvent
-from models import *
-from services.event_service import EventService
+from ..models import *
+from ..services.event_service import EventService
 
 app = FastAPI()
 
@@ -33,12 +32,14 @@ async def create_event(event: BaseEvent, event_service: EventService = Depends(g
     # event_model = EVENT_TYPE_MAPPING.get(event_type)
 
     # if event_model:
-    try:
-        event = BaseEvent(**event.model_dump())
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid data for event type {event.event_type}: {e}")
+    print("Event input", event)
 
-    if event_service.process_event(event.model_dump()):
+    # if event_service.process_event(event):
+    #     return {"message": "Event received and processed"}
+    # else:
+    #     raise HTTPException(status_code=500, detail="Event processing failed")
+    try:
+        event_service.process_event(event)
         return {"message": "Event received and processed"}
-    else:
-        raise HTTPException(status_code=500, detail="Event processing failed")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
