@@ -1,15 +1,12 @@
 import requests
-import boto3
 import json
+import asyncpg
 import os
+
 
 # HPC Service Configuration
 HPC_SERVICE_URL = "https://<root_ip>:<port>"
 HPC_AUTH_TOKEN = "MY_SECRET_TOKEN"
-
-# AWS SQS Configuration
-AWS_REGION = "us-east-1"  # Change to your AWS region
-
 
 def register_user(user):
     """register a new user service via HPC"""
@@ -24,35 +21,76 @@ def register_user(user):
     response = requests.post(url, headers=headers, json=data)
 
     if response.status_code == 200:
-        return response.json()  # Returns {'ip': 'x.x.x.x', 'port': 'xxxx', 'token': 'abc123'}
+        return response.json()  # Returns {'ip': 'x.x.x.x', 'port': 'xxxx', 'token': 'abc123', 'queue_url': 'https://sqs.us-east-1.amazonaws.com/1234567890/queue_name'}
     else:
         raise Exception(f"Failed to register user: {response.text}")
 
 
-def create_sqs_queue(user):
-    """create an SQS queue for the user"""
+async def initialize_pool():
+    """Initialize the db connection pool"""
 
-    sqs = boto3.client("sqs", region_name=AWS_REGION)
+    pool = await asyncpg.create_pool(
+        host=os.getenv('PGHOST'),
+        database=os.getenv('PGDATABASE'),
+        user=os.getenv('PGUSER'),
+        password=os.getenv('PGPASSWORD'),
+        port=int(os.getenv('PGPORT', 5432)),
+    )
 
-    queue_name = f"{user}-event-queue"
-    response = sqs.create_queue(QueueName=queue_name)
-
-    queue_url = response["QueueUrl"]
-    return queue_url
+    return pool
 
 
-def subscribe_event(user, event_type, cmd):
-    """subscribe or edit an event for a user"""
+async def add_user_to_db(username, ip_port, token, queue_url):
+    """Add user to the db"""
+
+    pool = await initialize_pool()
+    query_user = "INSERT INTO users (username, ip_port, token, queue_url) VALUES ($1, $2, $3, $4)"
+
+    with pool.acquire() as conn:
+        await conn.execute(query_user, username, ip_port, token, queue_url)
+
+
+async def get_user_event_details(user, event_type):
+    """Fetch user event from the db"""
+
+    pool = await initialize_pool()
+    query_subscriptions = "SELECT * FROM subscriptions WHERE username = $1 AND event_type = $2"
+
+    async with pool.acquire() as conn:
+        result = await conn.fetch(query_subscriptions, user, event_type)
+
+    return result[0] if result else None
+
+
+async def get_user_service_details(user):
+    """Fetch user's service details from the db"""
+
+    pool = await initialize_pool()
+    query_user = "SELECT * FROM users WHERE username = $1"
+
+    async with pool.acquire() as conn:
+        result = await conn.fetch(query_user, user)
+
+    return result[0] if result else None
+
+
+def subscribe_event(username, event_type, cmd):
+    """Subscribe or edit an event for a user"""
+
+    user_event_details = get_user_event_details(username, event_type)
+    if user_event_details is not None:
+        raise Exception(f"Subscription already exists for user: {username} of event: {event_type} \nPlease use 'edit' to update the event subscription.")
 
     # Register user and get their service details
-    user_service = register_user(user)
-    user_ip, user_port, user_token = user_service["ip"], user_service["port"], user_service["token"]
+    user_service = register_user(username)
+    user_ip, user_port, user_token, queue_url = user_service["ip"], user_service["port"], user_service["token"], user_service["queue_url"]
 
-    # Create SQS queue and save queue_url
-    queue_url = create_sqs_queue(user)
+    ip_port = f"{user_ip}:{user_port}"
 
-    # Subscribe (or edit) event
-    url = f"https://{user_ip}:{user_port}/subscribe"
+    # Add this user to db
+    add_user_to_db(username, ip_port, user_token, queue_url)
+
+    url = f"https://{ip_port}/subscribe"
     headers = {
         "Authorization": f"Bearer {user_token}",
         "Content-Type": "application/json"
@@ -62,21 +100,52 @@ def subscribe_event(user, event_type, cmd):
     response = requests.post(url, headers=headers, json=data)
 
     if response.status_code == 200:
-        print(f"Successfully subscribed/updated {user} to {event_type}.")
-        return {"queue_url": queue_url, "user_service": user_service}
+        print(f"Successfully subscribed {username} to {event_type}.")
+        print(f"Registed user-event details: {get_user_event_details(username, event_type)}")
     else:
-        raise Exception(f"Failed to subscribe/update user: {response.text}")
+        raise Exception(f"Failed to subscribe user: {response.text}")
 
 
-def unsubscribe_event(user, event_type):
-    """unsubscribe from an event"""
+def edit_event(username, event_type, cmd):
+    """Edit an event for a user"""
 
-    user_service = register_user(user)
-    user_ip, user_port, user_token = user_service["ip"], user_service["port"], user_service["token"]
+    user_event_details = get_user_event_details(username, event_type)
 
-    url = f"https://{user_ip}:{user_port}/unsubscribe"
+    if user_event_details is None:
+        raise Exception(f"Subscription not found for user: {username} of event_type: {event_type} \nPlease use 'subscribe' to create a new subscription.")
+    
+    user_service_details = get_user_service_details(username)
+    ip_port, token = user_service_details["ip_port"], user_service_details["token"]
+
+    url = f"https://{ip_port}/subscribe"
     headers = {
-        "Authorization": f"Bearer {user_token}",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    data = {"event_type": event_type, "cmd": cmd}
+
+    response = requests.post(url, headers=headers, json=data)
+
+    if response.status_code == 200:
+        print(f"Successfully updated {username} subscription to {event_type}.")
+        print(f"Updated user-event details: {get_user_event_details(username, event_type)}")
+    else:
+        raise Exception(f"Failed to update user: {response.text}")
+
+
+def unsubscribe_event(username, event_type):
+    """Unsubscribe user from an event"""
+
+    user_event_details = get_user_event_details(username, event_type)
+    if user_event_details is None:
+        raise Exception(f"Subscription not found for user: {username} of event_type: {event_type} \nPlease use 'subscribe' to create a new subscription.")
+    
+    user_service_details = get_user_service_details(username)
+    ip_port, token = user_service_details["ip_port"], user_service_details["token"]
+
+    url = f"https://{ip_port}/unsubscribe"
+    headers = {
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
     data = {"event_type": event_type}
@@ -84,27 +153,30 @@ def unsubscribe_event(user, event_type):
     response = requests.post(url, headers=headers, json=data)
 
     if response.status_code == 200:
-        print(f"Successfully unsubscribed {user} from {event_type}.")
+        print(f"Successfully unsubscribed {username} from {event_type}.")
     else:
         raise Exception(f"Failed to unsubscribe user: {response.text}")
 
 
 def list_subscriptions(user):
-    """get list of subscriptions for a user"""
+    """Get a list of subscriptions for a user"""
 
-    user_service = register_user(user)
-    user_ip, user_port, user_token = user_service["ip"], user_service["port"], user_service["token"]
+    user_service_details = get_user_service_details(user)
+    if user_service_details is None:
+        raise Exception(f"User not found: {user}")
+    
+    ip_port, token = user_service_details["ip_port"], user_service_details["token"]
 
-    url = f"https://{user_ip}:{user_port}/list-subscriptions"
+    url = f"https://{ip_port}/list-subscriptions"
     headers = {
-        "Authorization": f"Bearer {user_token}"
+        "Authorization": f"Bearer {token}"
     }
 
     response = requests.get(url, headers=headers)
 
     if response.status_code == 200:
         subscriptions = response.json()
-        print(f"Subscriptions for {user}: {json.dumps(subscriptions, indent=4)}")
+        print(f"Subscriptions for {user}: \n{json.dumps(subscriptions, indent=4)}\n")
     else:
         raise Exception(f"Failed to fetch subscriptions: {response.text}")
 
@@ -126,22 +198,30 @@ if __name__ == "__main__":
         print("Error: User is required.")
         exit(1)
 
-    if args.action in ["subscribe", "edit"]:
-        if not args.event_type:
-            print("Error: Event type is required for subscribing or editing.")
-            exit(1)
-        if not args.cmd:
-            print("Error: --cmd is required for subscribing or editing.")
-            exit(1)
-        result = subscribe_event(args.user, args.event_type, args.cmd)
-        print(f"Subscribed/Updated Successfully! Queue URL: {result['queue_url']}")
+    if not args.event_type and args.action in ["subscribe", "unsubscribe", "edit"]:
+        print(f"Error: Event type is required for action: {args.action}")
+        exit(1)
 
-    elif args.action == "unsubscribe":
-        if not args.event_type:
-            print("Error: Event type is required for unsubscribing.")
-            exit(1)
-        unsubscribe_event(args.user, args.event_type)
+    if not args.cmd and args.action in ["subscribe", "edit"]:
+        print(f"Error: --cmd is required for action: {args.action}")
+        exit(1)
 
-    elif args.action == "info":
-        list_subscriptions(args.user)
+    try:
+        if args.action in ["subscribe"]:
+            subscribe_event(args.user, args.event_type, args.cmd)
+            print(f"\nSubscribed Successfully!")
+
+        elif args.action == "edit":
+            edit_event(args.user, args.event_type, args.cmd)
+            print(f"\nEdited Successfully!")
+
+        elif args.action == "unsubscribe":
+            unsubscribe_event(args.user, args.event_type)
+            print(f"\nUnsubscribed Successfully!")
+
+        elif args.action == "info":
+            list_subscriptions(args.user)
+
+    except Exception as e:
+        print(f"Error trying to perform action: {args.action} error: {e}")
 
