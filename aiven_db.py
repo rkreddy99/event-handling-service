@@ -18,6 +18,7 @@ connection = pymysql.connect(
 try:
     cursor = connection.cursor()
     cursor.execute("USE testdb")
+    
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -32,19 +33,19 @@ try:
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS subscriptions (
-            event_type VARCHAR(255) PRIMARY KEY,
+            event_type VARCHAR(255) NOT NULL,
             command TEXT NOT NULL,
             username VARCHAR(255) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (event_type, username),
             FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
         )
     """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS acl_function (
-            acl_id INT AUTO_INCREMENT PRIMARY KEY,
-            function_name TEXT NOT NULL,
+            function_name VARCHAR(255) PRIMARY KEY,
             function_path TEXT NOT NULL
         )
     """)
@@ -52,22 +53,36 @@ try:
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS event_acl_mapping (
             event_type VARCHAR(255) NOT NULL,
-            acl_id INT NOT NULL,
-            PRIMARY KEY (event_type, acl_id),
-            FOREIGN KEY (acl_id) REFERENCES acl_function(acl_id) ON DELETE CASCADE
+            function_name VARCHAR(255) NOT NULL,
+            PRIMARY KEY (event_type, function_name),
+            FOREIGN KEY (function_name) REFERENCES acl_function(function_name) ON DELETE CASCADE
         )
     """)
 
     cursor.execute("SHOW TABLES")
     print(cursor.fetchall(), "\n")
 
+    # inserting data in users
     cursor.execute("INSERT INTO users (username, role, ip_port, queue_url, token) VALUES ('saatvik.rao', 'admin', 'http://10.253.2.59:8020', 'https://sqs.us-east-1.amazonaws.com/1234567890/queue_name', 'abc123')")
     cursor.execute("INSERT INTO users (username, role, ip_port, queue_url, token) VALUES ('test.user', 'user', 'http://', 'https://', 'def456')")
     cursor.execute("SELECT * FROM users")
+    print(f"users table: {cursor.fetchall()}\n")
 
-    # print the table in a good format
-    for row in cursor.fetchall():
-        print(row)
+    # inserting data in subscriptions
+    cursor.execute("INSERT INTO subscriptions (event_type, command, username) VALUES ('test2', 'python /home/tachyon/event_handling/test_script.py <strategy> <date>', 'saatvik.rao')")
+    cursor.execute("INSERT INTO subscriptions (event_type, command, username) VALUES ('test2', 'python bash updated_test.sh <strategy> <date>', 'test.user')")
+    cursor.execute("SELECT * FROM subscriptions")
+    print(f"subscriptions table: {cursor.fetchall()}\n")
+
+    # inserting data in acl_function
+    cursor.execute("INSERT INTO acl_function (function_name, function_path) VALUES ('admin_tag_check', 'acl_checks.admin_tag_check')")
+    cursor.execute("SELECT * FROM acl_function")
+    print(f"acl_function table: {cursor.fetchall()}\n")
+
+    # inserting data in event_acl_mapping
+    cursor.execute("INSERT INTO event_acl_mapping (event_type, function_name) VALUES ('test2', 'admin_tag_check')")
+    cursor.execute("SELECT * FROM event_acl_mapping")
+    print(f"event_acl_mapping table: {cursor.fetchall()}\n")
 
 finally:
     connection.close()
