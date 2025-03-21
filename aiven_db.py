@@ -18,9 +18,9 @@ connection = pymysql.connect(
 try:
     cursor = connection.cursor()
     cursor.execute("USE testdb")
-    
+
     cursor.execute("""
-        CREATE TABLE users (
+        CREATE TABLE IF NOT EXISTS users (
             username VARCHAR(255) PRIMARY KEY,
             role ENUM('admin', 'user') NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -31,7 +31,7 @@ try:
     """)
 
     cursor.execute("""
-        CREATE TABLE subscriptions (
+        CREATE TABLE IF NOT EXISTS subscriptions (
             event_type VARCHAR(255) PRIMARY KEY,
             command TEXT NOT NULL,
             username VARCHAR(255) NOT NULL,
@@ -42,7 +42,7 @@ try:
     """)
 
     cursor.execute("""
-        CREATE TABLE acl_function (
+        CREATE TABLE IF NOT EXISTS acl_function (
             acl_id INT AUTO_INCREMENT PRIMARY KEY,
             function_name TEXT NOT NULL,
             function_path TEXT NOT NULL
@@ -50,7 +50,7 @@ try:
     """)
 
     cursor.execute("""
-        CREATE TABLE event_acl_mapping (
+        CREATE TABLE IF NOT EXISTS event_acl_mapping (
             event_type VARCHAR(255) NOT NULL,
             acl_id INT NOT NULL,
             PRIMARY KEY (event_type, acl_id),
