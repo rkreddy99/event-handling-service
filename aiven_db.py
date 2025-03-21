@@ -84,5 +84,8 @@ try:
     cursor.execute("SELECT * FROM event_acl_mapping")
     print(f"event_acl_mapping table: {cursor.fetchall()}\n")
 
+    # commit the changes to db
+    connection.commit()
+
 finally:
     connection.close()
