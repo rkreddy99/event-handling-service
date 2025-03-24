@@ -1,15 +1,16 @@
 import os
 import subprocess
-import asyncio
 
-async def execute_cmd(cmd, wait=False):
-    proc = await asyncio.create_subprocess_shell(
+def execute_cmd(cmd, wait=False):
+    proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+        stderr=subprocess.PIPE,
+        shell=True,
+        start_new_session=True
     )
     if wait:
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = proc.communicate()
         if stdout:
             print(f"[STDOUT] {stdout.decode().strip()}")
         if stderr:

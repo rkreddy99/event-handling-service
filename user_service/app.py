@@ -21,33 +21,33 @@ class Application(tornado.web.Application):
         self.event_type_cmd_map = event_type_cmd_map
 
 
-async def main(port):
+def main(port):
+    # Initialize MySQL connection
     db = Database()
-    await db.connect()
-    await db.init_db()
+    db.connect()
+    db.init_db()
     print("✅ Database connected and initialized")
 
     # Load event_type -> command map
-    event_type_cmd_map = await db.load_event_type_cmd_map()
+    event_type_cmd_map = db.load_event_type_cmd_map()
     print(f"✅ Loaded command map: {event_type_cmd_map}")
 
+    # Start the Tornado app
     app = Application(db, event_type_cmd_map)
     app.listen(port)
 
+    # Print the server info
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
     print(f"🚀 Server started at http://{local_ip}:{port}")
+
+    # Start the Tornado IOLoop
+    tornado.ioloop.IOLoop.current().start()
 
 
 if __name__ == "__main__":
     port = 8021
     if len(sys.argv) > 1:
-        port = sys.argv[1]
-    import asyncio
+        port = int(sys.argv[1])
 
-    async def start_server():
-        await main(port)  # Set everything up
-        await asyncio.Event().wait()  # Keeps running forever
-
-    asyncio.run(start_server())
-
+    main(port)

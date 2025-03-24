@@ -10,10 +10,9 @@ class MainHandler(tornado.web.RequestHandler):
     """
 
     @authenticate
-    async def post(self):
+    def post(self):
         """
         Trigger command for a given username and event_type by replacing placeholders with data from request.
-
         Request JSON:
             {
                 "username": "user1",
@@ -27,15 +26,17 @@ class MainHandler(tornado.web.RequestHandler):
             404 Not Found: {"error": "No command found for this event_type and username"}
         """
         body = tornado.escape.json_decode(self.request.body)
+        print(f"payload: {body}")
         event_type = body.get("event_type")
         username = body.get("username")
+        
         if not event_type or not username:
             self.set_status(400)
             self.write({"error": "event_type and username are required"})
             return
 
         key = (username, event_type)
-        command_template = self.application.event_type_cmd_map.get(key)
+        command_template = self.application.event_type_cmd_map.get(key)    
         if not command_template:
             self.set_status(404)
             self.write({"error": "No command found for this event_type and username"})
@@ -48,22 +49,15 @@ class MainHandler(tornado.web.RequestHandler):
 
         print(f"⚙️ Executing command: {command}")
 
-        # Execute command
-        await execute_cmd(command)
+        # Execute command synchronously
+        execute_cmd(command)
         self.write({"status": "Command executed"})
 
 
 class SubscribeHandler(tornado.web.RequestHandler):
     """
     Handler to subscribe a user to an event with a command.
-    """
-
-    @authenticate
-    async def post(self):
-        """
-        Add or update a subscription for a username and event_type.
-
-        Request JSON:
+    Request JSON:
             {
                 "username": "user1",
                 "event_type": "deploy",
@@ -73,18 +67,26 @@ class SubscribeHandler(tornado.web.RequestHandler):
         Response:
             200 OK: {"status": "Subscription added/updated"}
             400 Bad Request: {"error": "event_type, command, and username are required"}
+    """
+
+    @authenticate
+    def post(self):
+        """
+        Add or update a subscription for a username and event_type.
         """
         body = tornado.escape.json_decode(self.request.body)
         event_type = body.get("event_type")
         command = body.get("command")
         username = body.get("username")
+
         if not event_type or not command or not username:
             self.set_status(400)
             self.write({"error": "event_type, command, and username are required"})
             return
 
-        # Insert or update in DB
-        await self.application.db.upsert_subscription(username, event_type, command)
+        # Insert or update in DB (synchronously)
+        self.application.db.upsert_subscription(username, event_type, command)
+
         # Update in-memory map
         self.application.event_type_cmd_map[(username, event_type)] = command
 
@@ -99,30 +101,22 @@ class UnsubscribeHandler(tornado.web.RequestHandler):
     """
 
     @authenticate
-    async def post(self):
+    def post(self):
         """
         Delete a subscription for a username and event_type.
-
-        Request JSON:
-            {
-                "username": "user1",
-                "event_type": "deploy"
-            }
-
-        Response:
-            200 OK: {"status": "Subscription removed"}
-            400 Bad Request: {"error": "event_type and username are required"}
         """
         body = tornado.escape.json_decode(self.request.body)
         event_type = body.get("event_type")
         username = body.get("username")
+
         if not event_type or not username:
             self.set_status(400)
             self.write({"error": "event_type and username are required"})
             return
 
-        # Remove from DB
-        await self.application.db.delete_subscription(username, event_type)
+        # Remove from DB (synchronously)
+        self.application.db.delete_subscription(username, event_type)
+
         # Remove from in-memory map
         self.application.event_type_cmd_map.pop((username, event_type), None)
 
@@ -134,14 +128,7 @@ class UnsubscribeHandler(tornado.web.RequestHandler):
 class ListSubscriptionsHandler(tornado.web.RequestHandler):
     """
     Handler to list all subscriptions for a username, optionally filtered by event_type.
-    """
-
-    @authenticate
-    async def get(self):
-        """
-        List subscriptions for a username (optionally filtered by event_type).
-
-        Query parameters:
+    Query parameters:
             - username (required)
             - event_type (optional)
 
@@ -152,6 +139,12 @@ class ListSubscriptionsHandler(tornado.web.RequestHandler):
         Response:
             200 OK: List of subscriptions
             400 Bad Request: {"error": "username is required"}
+    """
+
+    @authenticate
+    def get(self):
+        """
+        List subscriptions for a username (optionally filtered by event_type).
         """
         username = self.get_argument("username", None)
         event_type = self.get_argument("event_type", None)
@@ -161,8 +154,8 @@ class ListSubscriptionsHandler(tornado.web.RequestHandler):
             self.write({"error": "username is required"})
             return
 
-        # Fetch subscriptions from DB
-        subscriptions = await self.application.db.list_subscriptions(username, event_type)
+        # Fetch subscriptions from DB (synchronously)
+        subscriptions = self.application.db.list_subscriptions(username, event_type)
 
         print(f"📋 Listed {len(subscriptions)} subscription(s) for username='{username}'" + (f", event_type='{event_type}'" if event_type else ""))
 
@@ -178,9 +171,6 @@ class HealthHandler(tornado.web.RequestHandler):
     def get(self):
         """
         Health check endpoint.
-
-        Response:
-            200 OK: {"status": "ok"}
         """
         self.write({"status": "ok"})
 

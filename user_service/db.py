@@ -1,136 +1,126 @@
-import asyncpg
+import pymysql
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file (for database credentials)
+# Load environment variables from .env file
 load_dotenv()
 
 
 class Database:
     """
-    A class to manage asynchronous PostgreSQL database operations for subscriptions.
+    A class to manage MySQL database operations for subscriptions using pymysql.
     """
 
     def __init__(self):
-        # Connection pool placeholder
-        self.pool = None
+        # Read MySQL credentials from environment variables
+        self.host = os.getenv("MYSQL_HOST")
+        self.database = os.getenv("MYSQL_DATABASE")
+        self.user = os.getenv("MYSQL_USER")
+        self.password = os.getenv("MYSQL_PASSWORD")
+        self.port = int(os.getenv("MYSQL_PORT", 3306))
+        self.connection = None
 
-    async def connect(self):
-        """
-        Establishes a connection pool to the PostgreSQL database using asyncpg.
-        """
-        print("🔌 Connecting to the database...")
-        self.pool = await asyncpg.create_pool(
-            host=os.getenv("PGHOST"),
-            database=os.getenv("PGDATABASE"),
-            user=os.getenv("PGUSER"),
-            password=os.getenv("PGPASSWORD"),
-            min_size=1,  # Minimum number of connections
-            max_size=5  # Maximum number of connections
+    def connect(self):
+        """Establishes a connection to the MySQL database."""
+        print("🔌 Connecting to the MySQL database...")
+        self.connection = pymysql.connect(
+            host=self.host,
+            user=self.user,
+            password=self.password,
+            database=self.database,
+            port=self.port,
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=True
         )
-        print("✅ Connected to the database successfully.")
+        print("✅ Connected to MySQL successfully.")
 
-    async def init_db(self):
-        """
-        Initializes the 'subscriptions' table if it does not exist.
-        The table holds subscriptions mapped by (username, event_type) as primary key.
-        """
+    def init_db(self):
+        """Initializes the `subscriptions` table if it does not exist."""
         print("🛠️  Initializing the database and creating subscriptions table if not exists...")
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
+        with self.connection.cursor() as cursor:
+            cursor.execute('''
                 CREATE TABLE IF NOT EXISTS subscriptions (
-                    username TEXT NOT NULL,
-                    event_type TEXT NOT NULL,
+                    username VARCHAR(255) NOT NULL,
+                    event_type VARCHAR(255) NOT NULL,
                     command TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     PRIMARY KEY (username, event_type)
                 )
             ''')
         print("✅ Table 'subscriptions' is ready.")
 
-    async def upsert_subscription(self, username, event_type, command):
+    def upsert_subscription(self, username, event_type, command):
         """
-        Inserts a new subscription or updates the command if the (username, event_type) pair already exists.
-
-        Args:
-            username (str): The username associated with the subscription.
-            event_type (str): The type of event for which the subscription is made.
-            command (str): The command to execute when the event is triggered.
+        Inserts or updates a subscription for a (username, event_type) pair.
         """
         print(f"📥 Upserting subscription: username={username}, event_type={event_type}, command={command}")
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
+        with self.connection.cursor() as cursor:
+            cursor.execute('''
                 INSERT INTO subscriptions (username, event_type, command)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (username, event_type)
-                DO UPDATE SET command = $3, updated_at = CURRENT_TIMESTAMP
-            ''', username, event_type, command)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                command = VALUES(command), updated_at = CURRENT_TIMESTAMP
+            ''', (username, event_type, command))
         print("✅ Subscription added/updated successfully.")
 
-    async def delete_subscription(self, username, event_type):
+    def delete_subscription(self, username, event_type):
         """
         Deletes a subscription for a given username and event_type.
-
-        Args:
-            username (str): The username associated with the subscription.
-            event_type (str): The type of event whose subscription needs to be removed.
         """
         print(f"❌ Deleting subscription for username={username}, event_type={event_type}")
-        async with self.pool.acquire() as conn:
-            await conn.execute('''
-                DELETE FROM subscriptions WHERE username = $1 AND event_type = $2
-            ''', username, event_type)
+        with self.connection.cursor() as cursor:
+            cursor.execute('''
+                DELETE FROM subscriptions
+                WHERE username = %s AND event_type = %s
+            ''', (username, event_type))
         print("✅ Subscription deleted successfully.")
 
-    async def load_event_type_cmd_map(self):
+    def load_event_type_cmd_map(self):
         """
-        Loads all subscriptions from the database into an in-memory dictionary.
+        Loads all subscriptions into an in-memory dictionary.
 
         Returns:
-            dict: A dictionary mapping (username, event_type) to command.
+            dict: Mapping of (username, event_type) to command.
         """
         print("🔄 Loading event_type-command map from database...")
         event_type_cmd_map = {}
-        async with self.pool.acquire() as conn:
-            records = await conn.fetch("SELECT username, event_type, command FROM subscriptions")
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT username, event_type, command FROM subscriptions")
+            records = cursor.fetchall()
             for record in records:
-                # Map tuple (username, event_type) to command
                 event_type_cmd_map[(record['username'], record['event_type'])] = record['command']
         print(f"✅ Loaded {len(event_type_cmd_map)} subscriptions into in-memory map.")
         return event_type_cmd_map
 
-    async def list_subscriptions(self, username, event_type=None):
+    def list_subscriptions(self, username, event_type=None):
         """
-        Lists all subscriptions for a given username. Optionally filters by event_type.
+        Lists all subscriptions for a username, optionally filtered by event_type.
 
         Args:
-            username (str): The username whose subscriptions are to be listed.
-            event_type (str, optional): If provided, filters subscriptions for this specific event type.
+            username (str): The username whose subscriptions are listed.
+            event_type (str, optional): Filters by event_type if provided.
 
         Returns:
-            list: A list of dictionaries containing subscription details.
+            list: List of dictionaries containing subscription details.
         """
         print(f"📋 Listing subscriptions for username={username}" + (f", event_type={event_type}" if event_type else ""))
-        async with self.pool.acquire() as conn:
-            if event_type:
-                # Fetch specific subscription if event_type is provided
-                query = '''
-                    SELECT username, event_type, command, created_at, updated_at
-                    FROM subscriptions
-                    WHERE username = $1 AND event_type = $2
-                '''
-                records = await conn.fetch(query, username, event_type)
-            else:
-                # Fetch all subscriptions for the user
-                query = '''
-                    SELECT username, event_type, command, created_at, updated_at
-                    FROM subscriptions
-                    WHERE username = $1
-                '''
-                records = await conn.fetch(query, username)
+        
+        query = '''
+            SELECT username, event_type, command, created_at, updated_at
+            FROM subscriptions
+            WHERE username = %s
+        '''
+        params = [username]
 
-        # Convert records to list of dictionaries
+        if event_type:
+            query += " AND event_type = %s"
+            params.append(event_type)
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            records = cursor.fetchall()
+
         subscriptions = [
             {
                 "username": record["username"],
@@ -141,6 +131,16 @@ class Database:
             }
             for record in records
         ]
-        print(f"✅ Found {len(subscriptions)} subscription(s) for username='{username}'" + (f", event_type='{event_type}'" if event_type else ""))
+
+        print(f"✅ Found {len(subscriptions)} subscription(s) for username='{username}'" +
+              (f", event_type='{event_type}'" if event_type else ""))
         return subscriptions
+
+    def close(self):
+        """Closes the MySQL connection."""
+        if self.connection:
+            self.connection.close()
+            print("🔌 MySQL connection closed.")
+
+
 
