@@ -2,6 +2,7 @@ import requests
 import json
 import asyncpg
 import os
+import pymysql
 
 
 # HPC Service Configuration
@@ -26,38 +27,37 @@ def register_user(user):
         raise Exception(f"Failed to register user: {response.text}")
 
 
-async def initialize_pool():
-    """Initialize the db connection pool"""
+# DB Configuration
+timeout = 10
 
-    pool = await asyncpg.create_pool(
-        host=os.getenv('PGHOST'),
-        database=os.getenv('PGDATABASE'),
-        user=os.getenv('PGUSER'),
-        password=os.getenv('PGPASSWORD'),
-        port=int(os.getenv('PGPORT', 5432)),
-    )
-
-    return pool
+connection = pymysql.connect(
+    charset="utf8mb4",
+    connect_timeout=timeout,
+    cursorclass=pymysql.cursors.DictCursor,
+    db="testdb",
+    host="event-handling-service-event-handling-service.l.aivencloud.com",
+    password="AVNS_gZLS0lFs9Rf0rIkJt9A",
+    read_timeout=timeout,
+    port=15095,
+    user="avnadmin",
+    write_timeout=timeout,
+)
 
 
 async def add_user_to_db(username, ip_port, token, queue_url):
     """Add user to the db"""
 
-    pool = await initialize_pool()
+    cursor = connection.cursor()
     query_user = "INSERT INTO users (username, ip_port, token, queue_url) VALUES ($1, $2, $3, $4)"
-
-    with pool.acquire() as conn:
-        await conn.execute(query_user, username, ip_port, token, queue_url)
+    cursor.execute(query_user, username, ip_port, token, queue_url)
 
 
 async def get_user_event_details(user, event_type):
     """Fetch user event from the db"""
 
-    pool = await initialize_pool()
+    cursor = connection.cursor()
     query_subscriptions = "SELECT * FROM subscriptions WHERE username = $1 AND event_type = $2"
-
-    async with pool.acquire() as conn:
-        result = await conn.fetch(query_subscriptions, user, event_type)
+    result = cursor.execute(query_subscriptions, user, event_type)
 
     return result[0] if result else None
 
@@ -65,11 +65,9 @@ async def get_user_event_details(user, event_type):
 async def get_user_service_details(user):
     """Fetch user's service details from the db"""
 
-    pool = await initialize_pool()
+    cursor = connection.cursor()
     query_user = "SELECT * FROM users WHERE username = $1"
-
-    async with pool.acquire() as conn:
-        result = await conn.fetch(query_user, user)
+    result = cursor.execute(query_user, user)
 
     return result[0] if result else None
 
