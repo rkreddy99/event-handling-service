@@ -9,8 +9,22 @@ import pymysql
 HPC_SERVICE_URL = "https://<root_ip>:<port>"
 HPC_AUTH_TOKEN = "MY_SECRET_TOKEN"
 
+# DB Configuration
+connection = pymysql.connect(
+    host=os.getenv("MYSQL_HOST"),
+    user=os.getenv("MYSQL_USER"),
+    password=os.getenv("MYSQL_PASSWORD"),
+    database=os.getenv("MYSQL_DATABASE"),
+    port=int(os.getenv("MYSQL_PORT", 3306)),
+    cursorclass=pymysql.cursors.DictCursor,
+    autocommit=True
+)
+
+
 def register_user(user):
-    """register a new user service via HPC"""
+    """
+    Registers a new user service via HPC
+    """
 
     url = f"{HPC_SERVICE_URL}/register"
     headers = {
@@ -22,58 +36,52 @@ def register_user(user):
     response = requests.post(url, headers=headers, json=data)
 
     if response.status_code == 200:
-        return response.json()  # Returns {'ip': 'x.x.x.x', 'port': 'xxxx', 'token': 'abc123', 'queue_url': 'https://sqs.us-east-1.amazonaws.com/1234567890/queue_name'}
+        return response.json()  # returns ip, port, token, queue_url
     else:
         raise Exception(f"Failed to register user: {response.text}")
 
 
-# DB Configuration
-timeout = 10
-
-connection = pymysql.connect(
-    charset="utf8mb4",
-    connect_timeout=timeout,
-    cursorclass=pymysql.cursors.DictCursor,
-    db="testdb",
-    host="event-handling-service-event-handling-service.l.aivencloud.com",
-    password="AVNS_gZLS0lFs9Rf0rIkJt9A",
-    read_timeout=timeout,
-    port=15095,
-    user="avnadmin",
-    write_timeout=timeout,
-)
-
-
 async def add_user_to_db(username, ip_port, token, queue_url):
-    """Add user to the db"""
+    """
+    Adds user to the db
+    """
 
-    cursor = connection.cursor()
+    print(f"Adding user to db, username: {username}, ip_port: {ip_port}, token: {token}, queue_url: {queue_url}")
     query_user = "INSERT INTO users (username, ip_port, token, queue_url) VALUES ($1, $2, $3, $4)"
-    cursor.execute(query_user, username, ip_port, token, queue_url)
+    with connection.cursor() as cursor:
+        cursor.execute(query_user, username, ip_port, token, queue_url)
 
 
 async def get_user_event_details(user, event_type):
-    """Fetch user event from the db"""
+    """
+    Fetches user event from the db
+    """
 
-    cursor = connection.cursor()
+    print(f"Fetching user event details for: {user} of event: {event_type}")
     query_subscriptions = "SELECT * FROM subscriptions WHERE username = $1 AND event_type = $2"
-    result = cursor.execute(query_subscriptions, user, event_type)
+    with connection.cursor() as cursor:
+        result = cursor.execute(query_subscriptions, user, event_type)
 
     return result[0] if result else None
 
 
 async def get_user_service_details(user):
-    """Fetch user's service details from the db"""
+    """
+    Fetches user's service details from the db
+    """
 
-    cursor = connection.cursor()
+    print(f"Fetching user service details for: {user}")
     query_user = "SELECT * FROM users WHERE username = $1"
-    result = cursor.execute(query_user, user)
+    with connection.cursor() as cursor:
+        result = cursor.execute(query_user, user)
 
     return result[0] if result else None
 
 
 def subscribe_event(username, event_type, cmd):
-    """Subscribe or edit an event for a user"""
+    """
+    Subscribes an event for a user
+    """
 
     user_event_details = get_user_event_details(username, event_type)
     if user_event_details is not None:
@@ -105,13 +113,15 @@ def subscribe_event(username, event_type, cmd):
 
 
 def edit_event(username, event_type, cmd):
-    """Edit an event for a user"""
+    """
+    Edits an event for a user
+    """
 
     user_event_details = get_user_event_details(username, event_type)
 
     if user_event_details is None:
         raise Exception(f"Subscription not found for user: {username} of event_type: {event_type} \nPlease use 'subscribe' to create a new subscription.")
-    
+
     user_service_details = get_user_service_details(username)
     ip_port, token = user_service_details["ip_port"], user_service_details["token"]
 
@@ -132,12 +142,14 @@ def edit_event(username, event_type, cmd):
 
 
 def unsubscribe_event(username, event_type):
-    """Unsubscribe user from an event"""
+    """
+    Unsubscribes user from an event
+    """
 
     user_event_details = get_user_event_details(username, event_type)
     if user_event_details is None:
         raise Exception(f"Subscription not found for user: {username} of event_type: {event_type} \nPlease use 'subscribe' to create a new subscription.")
-    
+
     user_service_details = get_user_service_details(username)
     ip_port, token = user_service_details["ip_port"], user_service_details["token"]
 
@@ -157,12 +169,14 @@ def unsubscribe_event(username, event_type):
 
 
 def list_subscriptions(user):
-    """Get a list of subscriptions for a user"""
+    """
+    Gets a list of subscriptions for a user
+    """
 
     user_service_details = get_user_service_details(user)
     if user_service_details is None:
         raise Exception(f"User not found: {user}")
-    
+
     ip_port, token = user_service_details["ip_port"], user_service_details["token"]
 
     url = f"https://{ip_port}/list-subscriptions"
@@ -180,7 +194,9 @@ def list_subscriptions(user):
 
 
 if __name__ == "__main__":
-    """CLI Execution"""
+    """
+    CLI Execution
+    """
 
     import argparse
 
