@@ -84,17 +84,23 @@ def subscribe_event(username, event_type, cmd):
     """
 
     user_event_details = get_user_event_details(username, event_type)
+    user_service_details = get_user_service_details(username)
+
+    # If user event pair already exists
     if user_event_details is not None:
         raise Exception(f"Subscription already exists for user: {username} of event: {event_type} \nPlease use 'edit' to update the event subscription.")
 
-    # Register user and get their service details
-    user_service = register_user(username)
-    user_ip, user_port, user_token, queue_url = user_service["ip"], user_service["port"], user_service["token"], user_service["queue_url"]
+    # If user does not exist, register them
+    if user_service_details is None:
+        user_service = register_user(username)
+        user_ip, user_port, user_token, queue_url = user_service["ip"], user_service["port"], user_service["token"], user_service["queue_url"]
 
-    ip_port = f"{user_ip}:{user_port}"
+        ip_port = f"{user_ip}:{user_port}"
 
-    # Add this user to db
-    add_user_to_db(username, ip_port, user_token, queue_url)
+        # Add this user to db - users table
+        add_user_to_db(username, ip_port, user_token, queue_url)
+    else:
+        ip_port, user_token = user_service_details["ip_port"], user_service_details["token"]
 
     url = f"https://{ip_port}/subscribe"
     headers = {
